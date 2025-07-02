@@ -1,46 +1,131 @@
-// controllers/authController.js
+const { validationResult } = require('express-validator');
 const User = require('../models/user');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 
-exports.register = async (req, res) => {
-  const { name, email, password } = req.body;
-
+// @desc    Register a new user
+// @route   POST /api/users/register
+// @access  Public
+const registerUser = async (req, res, next) => {
   try {
-    const exists = await User.findOne({ email });
-    if (exists) return res.status(400).json({ msg: 'User already exists' });
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashed = await bcrypt.hash(password, salt);
+    const { name, email, password } = req.body;
 
-    const newUser = await User.create({ name, email, password: hashed });
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
 
-    const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
-      expiresIn: '1d'
+    // Create new user
+    const user = new User({
+      name,
+      email,
+      password
     });
 
-    res.status(201).json({ token });
-  } catch (err) {
-    res.status(500).json({ msg: 'Server error' });
+    await user.save();
+
+    // Return user without password
+    const userResponse = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      createdAt: user.createdAt
+    };
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      user: userResponse
+    });
+
+  } catch (error) {
+    next(error);
   }
 };
 
-exports.login = async (req, res) => {
-  const { email, password } = req.body;
-
+// @desc    Get all users
+// @route   GET /api/users
+// @access  Public
+const getAllUsers = async (req, res, next) => {
   try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
-
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: '1d'
+    const users = await User.find({}).select('-password').sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      users
     });
 
-    res.json({ token });
-  } catch (err) {
-    res.status(500).json({ msg: 'Server error' });
+  } catch (error) {
+    next(error);
   }
+};
+
+// @desc    Login user
+// @route   POST /api/users/login
+// @access  Public
+const loginUser = async (req, res, next) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Check password
+    const isPasswordMatch = await user.comparePassword(password);
+    if (!isPasswordMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Return success response
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  registerUser,
+  getAllUsers,
+  loginUser
 };
